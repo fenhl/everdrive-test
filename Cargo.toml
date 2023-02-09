@@ -4,6 +4,10 @@ version = "0.1.0"
 authors = ["Fenhl <fenhl@fenhl.net>"]
 edition = "2021"
 
+[profile.release]
+lto = true
+strip = true
+
 [dependencies]
 byteorder = "1"
 serialport = "4"
