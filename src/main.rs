@@ -97,7 +97,7 @@ fn test_port(port_info: serialport::SerialPortInfo) -> Result<NativePort, Error>
 fn main() -> Result<(), Error> {
     let stdin = io::stdin();
     for port_info in serialport::available_ports().map_err(|e| Error { location: "list available ports", kind: e.into() })? {
-        println!("testing {:?}", port_info);
+        println!("testing {port_info:?}");
         match test_port(port_info) {
             Ok(mut port) => {
                 println!("success");
@@ -110,11 +110,11 @@ fn main() -> Result<(), Error> {
                 if buf == b"ZELDAZ" {
                     println!("RAM check successful");
                 } else {
-                    println!("unexpected RAM contents: {:?}", buf);
+                    println!("unexpected RAM contents: {buf:?}");
                 }
                 return Ok(())
             }
-            Err(e) => println!("failed: {}", e),
+            Err(e) => println!("failed: {e}"),
         }
     }
     println!("all ports failed");
