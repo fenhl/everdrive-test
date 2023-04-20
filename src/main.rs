@@ -1,5 +1,6 @@
 use {
     std::{
+        ffi::OsString,
         fmt,
         io::{
             self,
@@ -11,7 +12,13 @@ use {
     derive_more::From,
     serialport::SerialPort as _,
 };
-#[cfg(unix)] use serialport::TTYPort as NativePort;
+#[cfg(unix)] use {
+    std::path::{
+        Path,
+        PathBuf,
+    },
+    serialport::TTYPort as NativePort,
+};
 #[cfg(windows)] use serialport::COMPort as NativePort;
 
 const TEST_TIMEOUT: Duration = Duration::from_millis(200); // 200ms in the sample code
@@ -20,6 +27,8 @@ const REGULAR_TIMEOUT: Duration = Duration::from_secs(2); // 2 seconds in the sa
 #[derive(Debug, From)]
 enum ErrorKind {
     Io(io::Error),
+    OsString(OsString),
+    PortAtRoot,
     SerialPort(serialport::Error),
     UnknownReply([u8; 4]),
     Utf8(FromUtf8Error),
@@ -56,7 +65,9 @@ enum State {
 }
 
 fn test_port(port_info: serialport::SerialPortInfo) -> Result<(NativePort, State), Error> {
-    let mut port = serialport::new(port_info.port_name, 9_600)
+    #[cfg(unix)] let port_path = PathBuf::from("/dev").join(Path::new(&port_info.port_name).file_name().ok_or(ErrorKind::PortAtRoot).at("test_port path builder")?).into_os_string().into_string().at("test_port path builder")?;
+    #[cfg(windows)] let port_path = port_info.port_name;
+    let mut port = serialport::new(port_path, 9_600)
         .timeout(TEST_TIMEOUT)
         .open_native().at("test_port open")?;
     write!(port, "cmdt\0\0\0\0\0\0\0\0\0\0\0\0").at("test_port send")?;
