@@ -1,4 +1,4 @@
-Test code for the PC side of USB communication with the Ocarina of Time randomizer on EverDrive. EverDrive side at <https://github.com/fenhl/OoT-Randomizer/tree/everdrive>
+Test code for the PC side of USB communication with the Ocarina of Time randomizer on EverDrive. EverDrive side at <https://github.com/fenhl/OoT-Randomizer/compare/dev-fenhl...everdrive>
 
 resources for the EverDrive side:
 
