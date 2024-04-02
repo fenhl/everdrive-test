@@ -121,7 +121,7 @@ fn connect_to_port(port_info: serialport::SerialPortInfo) -> Result<Connection, 
     }
 }
 
-#[wheel::main(debug)]
+#[wheel::main]
 fn main() -> Result<(), Error> {
     let mut port_errors = Vec::default();
     for port_info in serialport::available_ports().map_err(|e| Error { location: "list available ports", kind: e.into() })? {
