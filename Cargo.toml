@@ -10,23 +10,9 @@ strip = true
 
 [dependencies]
 byteorder = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+derive_more = { version = "0.99", default-features = false, features = ["from"] }
 enum-iterator = "2"
+ootr-utils = { git = "https://github.com/midoshouse/rust-ootr-utils", branch = "main" }
 serialport = "4"
-
-[dependencies.chrono]
-version = "0.4"
-default-features = false
-features = ["clock"]
-
-[dependencies.derive_more]
-version = "0.99"
-default-features = false
-features = ["from"]
-
-[dependencies.ootr-utils]
-git = "https://github.com/midoshouse/rust-ootr-utils"
-branch = "main"
-
-[dependencies.wheel]
-git = "https://github.com/fenhl/wheel"
-branch = "main"
+wheel = { git = "https://github.com/fenhl/wheel", branch = "main" }
