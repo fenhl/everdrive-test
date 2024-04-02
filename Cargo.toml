@@ -9,6 +9,7 @@ lto = true
 strip = true
 
 [dependencies]
+arrayref = "0.3.7"
 byteorder = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 derive_more = { version = "0.99", default-features = false, features = ["from"] }

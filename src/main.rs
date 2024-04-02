@@ -11,6 +11,7 @@ use {
         thread::sleep,
         time::Duration,
     },
+    arrayref::array_ref,
     chrono::prelude::*,
     derive_more::From,
     enum_iterator::all,
@@ -117,7 +118,7 @@ fn connect_to_port(port_info: serialport::SerialPortInfo) -> Result<Connection, 
         }
         [b'c', b'm', b'd', b'r', ..] => Ok(Connection::MainMenu),
         [b'c', b'm', b'd', b'k', ..] => Ok(Connection::MainMenu), // older versions of EverDrive OS
-        _ => Err(ErrorKind::UnknownReply(cmd[..4].try_into().unwrap())).at("receive command check"),
+        _ => Err(ErrorKind::UnknownReply(*array_ref!(cmd, 0, 4))).at("receive command check"),
     }
 }
 
