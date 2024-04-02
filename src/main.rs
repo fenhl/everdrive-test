@@ -1,7 +1,5 @@
 use {
     std::{
-        ffi::OsString,
-        fmt,
         io::{
             self,
             prelude::*,
@@ -13,15 +11,17 @@ use {
     },
     arrayref::array_ref,
     chrono::prelude::*,
-    derive_more::From,
     enum_iterator::all,
     ootr_utils::spoiler::HashIcon,
     serialport::SerialPort as _,
 };
 #[cfg(unix)] use {
-    std::path::{
-        Path,
-        PathBuf,
+    std::{
+        ffi::OsString,
+        path::{
+            Path,
+            PathBuf,
+        },
     },
     serialport::TTYPort as NativePort,
 };
@@ -32,30 +32,41 @@ const REGULAR_TIMEOUT: Duration = Duration::from_secs(10); // twice the ping int
 
 const PROTOCOL_VERSION: u8 = 1;
 
-#[derive(Debug, From)]
+#[derive(Debug, thiserror::Error)]
 enum ErrorKind {
+    #[error(transparent)] Io(#[from] io::Error),
+    #[error(transparent)] SerialPort(#[from] serialport::Error),
+    #[error(transparent)] Utf8(#[from] FromUtf8Error),
+    #[error("all USB ports failed")]
     AllPortsFailed,
+    #[error("failed to decode hash icon")]
     HashIcon,
-    Io(io::Error),
+    #[cfg(unix)]
+    #[error("non-UTF-8 string: {}", .0.to_string_lossy())]
     OsString(OsString),
+    #[error("N64 reported world 0")]
     PlayerId,
-    #[cfg(unix)] PortAtRoot,
+    #[cfg(unix)]
+    #[error("found USB port at file system root")]
+    PortAtRoot,
+    #[error("unsupported randomizer version")]
     RandoVersion,
-    SerialPort(serialport::Error),
+    #[error("unexpected handshake reply: {0:x?}")]
     UnknownReply([u8; 4]),
-    Utf8(FromUtf8Error),
 }
 
-#[derive(Debug)]
+#[cfg(unix)]
+impl From<OsString> for ErrorKind {
+    fn from(s: OsString) -> Self {
+        Self::OsString(s)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("error at {location}: {kind}")]
 struct Error {
     location: &'static str,
-    kind: ErrorKind,
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "error at {}: {:?}", self.location, self.kind)
-    }
+    #[source] kind: ErrorKind,
 }
 
 trait ResultExt {
@@ -94,7 +105,7 @@ fn connect_to_port(port_info: serialport::SerialPortInfo) -> Result<Connection, 
     let mut cmd = [0; 16];
     port.read_exact(&mut cmd).at("receive prefix read")?;
     match cmd {
-        [b'O', b'o', b'T', b'R', major, minor, patch, branch, supplementary, PROTOCOL_VERSION, player_id, hash1, hash2, hash3, hash4, hash5] => {
+        [b'O', b'o', b'T', b'R', PROTOCOL_VERSION, major, minor, patch, branch, supplementary, player_id, hash1, hash2, hash3, hash4, hash5] => {
             port.set_timeout(REGULAR_TIMEOUT).map_err(|e| Error { location: "set regular timeout", kind: e.into() })?;
             let mut buf = [0; 16];
             buf[0] = b'M';
@@ -158,7 +169,7 @@ fn main() -> Result<(), Error> {
     } else {
         eprintln!("all ports failed:");
         for (port_info_debug, error) in port_errors {
-            eprintln!("{port_info_debug}: {error:?}");
+            eprintln!("{port_info_debug}: {error}");
         }
     }
     Err(ErrorKind::AllPortsFailed).at("main")

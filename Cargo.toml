@@ -12,8 +12,8 @@ strip = true
 arrayref = "0.3.7"
 byteorder = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-derive_more = { version = "0.99", default-features = false, features = ["from"] }
 enum-iterator = "2"
 ootr-utils = { git = "https://github.com/midoshouse/rust-ootr-utils", branch = "main" }
 serialport = "4"
+thiserror = "1.0.58"
 wheel = { git = "https://github.com/fenhl/wheel", branch = "main" }
