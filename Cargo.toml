@@ -10,7 +10,7 @@ strip = true
 
 [dependencies]
 byteorder = "1"
-enum-iterator = "1"
+enum-iterator = "2"
 serialport = "4"
 
 [dependencies.chrono]
