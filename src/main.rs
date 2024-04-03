@@ -37,8 +37,6 @@ enum ErrorKind {
     #[error(transparent)] Io(#[from] io::Error),
     #[error(transparent)] SerialPort(#[from] serialport::Error),
     #[error(transparent)] Utf8(#[from] FromUtf8Error),
-    #[error("all USB ports failed")]
-    AllPortsFailed,
     #[error("failed to decode hash icon")]
     HashIcon,
     #[cfg(unix)]
@@ -129,48 +127,91 @@ fn connect_to_port(port_info: serialport::SerialPortInfo) -> Result<Connection, 
         }
         [b'c', b'm', b'd', b'r', ..] => Ok(Connection::MainMenu),
         [b'c', b'm', b'd', b'k', ..] => Ok(Connection::MainMenu), // older versions of EverDrive OS
-        _ => Err(ErrorKind::UnknownReply(*array_ref!(cmd, 0, 4))).at("receive command check"),
+        _ => Err(ErrorKind::UnknownReply(*array_ref![cmd, 0, 4])).at("receive command check"),
     }
 }
 
 #[wheel::main]
 fn main() -> Result<(), Error> {
-    let mut port_errors = Vec::default();
-    for port_info in serialport::available_ports().map_err(|e| Error { location: "list available ports", kind: e.into() })? {
-        let port_info_debug = format!("{port_info:?}");
-        match connect_to_port(port_info) {
-            Ok(Connection::MainMenu) => {
-                println!("in main menu");
-                return Ok(())
-            }
-            Ok(Connection::InGame { rando_version, player_id, file_hash, mut port }) => {
-                println!("in game, randomizer version: {rando_version}, world {player_id}, hash: {file_hash:?}");
-                let mut buf = [0; 16];
-                loop {
-                    for _ in 0..5 {
-                        let bytes_read = port.read(&mut buf).at("read")?;
-                        if bytes_read > 0 {
-                            port.read_exact(&mut buf[bytes_read..]).at("read rest")?;
-                            println!("{} N64: {buf:?}", Utc::now().format("%Y-%m-%d %H:%M:%S"));
-                        } else {
-                            println!("nothing read");
-                        }
-                        sleep(Duration::from_secs(1));
-                    }
-                    port.write_all(b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0").at("send ping")?;
-                    port.read_exact(&mut buf).at("receive pong")?;
+    'menu_loop: loop {
+        let mut port_errors = Vec::default();
+        for port_info in serialport::available_ports().map_err(|e| Error { location: "list available ports", kind: e.into() })? {
+            let port_info_debug = format!("{port_info:?}");
+            match connect_to_port(port_info) {
+                Ok(Connection::MainMenu) => {
+                    println!("in main menu");
+                    sleep(Duration::from_secs(1));
+                    continue 'menu_loop
                 }
+                Ok(Connection::InGame { rando_version, player_id, file_hash, mut port }) => {
+                    println!("in game, randomizer version: {rando_version}, world {player_id}, hash: {file_hash:?}");
+                    let mut test_item_sent = false;
+                    let mut tx_buf = [0; 16];
+                    tx_buf[0] = 0x01; // Player Data
+                    tx_buf[1] = 2; // world number
+                    tx_buf[2] = 0xba; // P
+                    tx_buf[3] = 0x02; // 2
+                    tx_buf[4] = 0xdf; // space
+                    tx_buf[5] = 0xdf; // space
+                    tx_buf[6] = 0xdf; // space
+                    tx_buf[7] = 0xdf; // space
+                    tx_buf[8] = 0xdf; // space
+                    tx_buf[9] = 0xdf; // space
+                    // hardcode progressive items state as 0 for now
+                    port.write_all(&tx_buf).at("send player data")?;
+                    let mut rx_buf = [0; 16];
+                    loop {
+                        for _ in 0..5 {
+                            let bytes_read = port.read(&mut rx_buf).at("read")?;
+                            if bytes_read > 0 {
+                                port.read_exact(&mut rx_buf[bytes_read..]).at("read rest")?;
+                                match rx_buf[0] {
+                                    0x00 => {} // Ping
+                                    0x01 => {
+                                        let player_name = array_ref![rx_buf, 1, 8];
+                                        println!("{} N64: State: File Select, player name: {player_name:x?}", Utc::now().format("%Y-%m-%d %H:%M:%S"));
+                                    }
+                                    0x02 => {
+                                        let item_count = u16::from_be_bytes(*array_ref![rx_buf, 1, 2]);
+                                        println!("{} N64: State: In Game, item count: {item_count}", Utc::now().format("%Y-%m-%d %H:%M:%S"));
+                                        if !test_item_sent {
+                                            tx_buf = [0; 16];
+                                            tx_buf[0] = 0x02; // Get Item
+                                            tx_buf[1] = 0x00; // item kind hi
+                                            tx_buf[2] = 0x0d; // item kind lo
+                                            port.write_all(&tx_buf).at("send item")?;
+                                            test_item_sent = true;
+                                        }
+                                    }
+                                    0x03 => {
+                                        let override_key = array_ref![rx_buf, 1, 8];
+                                        let item_kind = u16::from_be_bytes(*array_ref![rx_buf, 9, 2]);
+                                        let target_world = rx_buf[11];
+                                        println!("{} N64: Send Item {item_kind:#06x} from location {override_key:x?} to world {target_world}", Utc::now().format("%Y-%m-%d %H:%M:%S"));
+                                    }
+                                    0x04 => println!("{} N64: Item Received", Utc::now().format("%Y-%m-%d %H:%M:%S")),
+                                    _ => println!("{} N64: {rx_buf:?}", Utc::now().format("%Y-%m-%d %H:%M:%S")),
+                                }
+                            } else {
+                                println!("nothing read");
+                            }
+                            sleep(Duration::from_secs(1));
+                        }
+                        port.write_all(b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0").at("send ping")?;
+                    }
+                }
+                Err(e) => port_errors.push((port_info_debug, e)),
             }
-            Err(e) => port_errors.push((port_info_debug, e)),
         }
-    }
-    if port_errors.is_empty() {
-        eprintln!("no ports found");
-    } else {
-        eprintln!("all ports failed:");
-        for (port_info_debug, error) in port_errors {
-            eprintln!("{port_info_debug}: {error}");
+        if port_errors.is_empty() {
+            eprintln!("no ports found");
+        } else {
+            eprintln!("all ports failed:");
+            for (port_info_debug, error) in port_errors {
+                eprintln!("{port_info_debug}: {error}");
+            }
         }
+        sleep(Duration::from_secs(1));
+        continue
     }
-    Err(ErrorKind::AllPortsFailed).at("main")
 }
