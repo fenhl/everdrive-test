@@ -1,28 +1,30 @@
 use {
     std::{
-        io::{
-            self,
-            prelude::*,
-        },
         num::NonZeroU8,
         string::FromUtf8Error,
-        thread::sleep,
         time::Duration,
     },
     arrayref::array_ref,
     chrono::prelude::*,
     enum_iterator::all,
     ootr_utils::spoiler::HashIcon,
-    serialport::SerialPort as _,
-};
-#[cfg(unix)] use {
-    std::{
-        ffi::OsString,
-        path::Path,
+    tokio::{
+        io::{
+            AsyncReadExt as _,
+            AsyncWriteExt as _,
+        },
+        time::sleep,
     },
-    serialport::TTYPort as NativePort,
+    tokio_serial::{
+        SerialPort as _,
+        SerialPortBuilderExt as _,
+        SerialStream,
+    },
 };
-#[cfg(windows)] use serialport::COMPort as NativePort;
+#[cfg(unix)] use std::{
+    ffi::OsString,
+    path::Path,
+};
 
 const TEST_TIMEOUT: Duration = Duration::from_millis(200); // 200ms in the sample code
 const REGULAR_TIMEOUT: Duration = Duration::from_secs(10); // twice the ping interval
@@ -31,8 +33,8 @@ const PROTOCOL_VERSION: u8 = 1;
 
 #[derive(Debug, thiserror::Error)]
 enum ErrorKind {
-    #[error(transparent)] Io(#[from] io::Error),
-    #[error(transparent)] SerialPort(#[from] serialport::Error),
+    #[error(transparent)] Io(#[from] std::io::Error),
+    #[error(transparent)] SerialPort(#[from] tokio_serial::Error),
     #[error(transparent)] Utf8(#[from] FromUtf8Error),
     #[error("failed to decode hash icon")]
     HashIcon,
@@ -85,20 +87,20 @@ enum Connection {
         rando_version: ootr_utils::Version,
         player_id: NonZeroU8,
         file_hash: [HashIcon; 5],
-        port: NativePort,
+        port: SerialStream,
     },
 }
 
-fn connect_to_port(port_info: serialport::SerialPortInfo) -> Result<Connection, Error> {
+async fn connect_to_port(port_info: tokio_serial::SerialPortInfo) -> Result<Connection, Error> {
     #[cfg(unix)] let port_path = Path::new("/dev").join(Path::new(&port_info.port_name).file_name().ok_or(ErrorKind::PortAtRoot).at("connect_to_port path builder")?).into_os_string().into_string().at("connect_to_port path builder")?;
     #[cfg(windows)] let port_path = port_info.port_name;
-    let mut port = serialport::new(port_path, 9_600)
+    let mut port = tokio_serial::new(port_path, 9_600)
         .timeout(TEST_TIMEOUT)
-        .open_native().at("test_port open")?;
-    port.write_all(b"cmdt\0\0\0\0\0\0\0\0\0\0\0\0").at("connect_to_port send cmdt")?;
-    port.flush().at("test_port flush")?;
+        .open_native_async().at("test_port open")?;
+    port.write_all(b"cmdt\0\0\0\0\0\0\0\0\0\0\0\0").await.at("connect_to_port send cmdt")?;
+    port.flush().await.at("test_port flush")?;
     let mut cmd = [0; 16];
-    port.read_exact(&mut cmd).at("receive prefix read")?;
+    port.read_exact(&mut cmd).await.at("receive prefix read")?;
     match cmd {
         [b'O', b'o', b'T', b'R', PROTOCOL_VERSION, major, minor, patch, branch, supplementary, player_id, hash1, hash2, hash3, hash4, hash5] => {
             port.set_timeout(REGULAR_TIMEOUT).map_err(|e| Error { location: "set regular timeout", kind: e.into() })?;
@@ -108,7 +110,7 @@ fn connect_to_port(port_info: serialport::SerialPortInfo) -> Result<Connection, 
             buf[2] = PROTOCOL_VERSION;
             buf[3] = 1; // enable MW_SEND_OWN_ITEMS
             buf[4] = 1; // enable MW_PROGRESSIVE_ITEMS_ENABLE
-            port.write_all(&buf).at("connect_to_port send MW")?;
+            port.write_all(&buf).await.at("connect_to_port send MW")?;
             Ok(Connection::InGame {
                 rando_version: ootr_utils::Version::from_bytes([major, minor, patch, branch, supplementary]).ok_or(ErrorKind::RandoVersion).at("connect_to_port")?,
                 player_id: NonZeroU8::new(player_id).ok_or(ErrorKind::PlayerId).at("connect_to_port")?,
@@ -129,15 +131,15 @@ fn connect_to_port(port_info: serialport::SerialPortInfo) -> Result<Connection, 
 }
 
 #[wheel::main]
-fn main() -> Result<(), Error> {
+async fn main() -> Result<(), Error> {
     'menu_loop: loop {
         let mut port_errors = Vec::default();
-        for port_info in serialport::available_ports().map_err(|e| Error { location: "list available ports", kind: e.into() })? {
+        for port_info in tokio_serial::available_ports().map_err(|e| Error { location: "list available ports", kind: e.into() })? {
             let port_info_debug = format!("{port_info:?}");
-            match connect_to_port(port_info) {
+            match connect_to_port(port_info).await {
                 Ok(Connection::MainMenu) => {
                     println!("in main menu");
-                    sleep(Duration::from_secs(1));
+                    sleep(Duration::from_secs(1)).await;
                     continue 'menu_loop
                 }
                 Ok(Connection::InGame { rando_version, player_id, file_hash, mut port }) => {
@@ -155,13 +157,13 @@ fn main() -> Result<(), Error> {
                     tx_buf[8] = 0xdf; // space
                     tx_buf[9] = 0xdf; // space
                     // hardcode progressive items state as 0 for now
-                    port.write_all(&tx_buf).at("send player data")?;
+                    port.write_all(&tx_buf).await.at("send player data")?;
                     let mut rx_buf = [0; 16];
                     loop {
                         for _ in 0..5 {
-                            let bytes_read = port.read(&mut rx_buf).at("read")?;
+                            let bytes_read = port.read(&mut rx_buf).await.at("read")?;
                             if bytes_read > 0 {
-                                port.read_exact(&mut rx_buf[bytes_read..]).at("read rest")?;
+                                port.read_exact(&mut rx_buf[bytes_read..]).await.at("read rest")?;
                                 match rx_buf[0] {
                                     0x00 => {} // Ping
                                     0x01 => {
@@ -176,7 +178,7 @@ fn main() -> Result<(), Error> {
                                             tx_buf[0] = 0x02; // Get Item
                                             tx_buf[1] = 0x00; // item kind hi
                                             tx_buf[2] = 0x0d; // item kind lo
-                                            port.write_all(&tx_buf).at("send item")?;
+                                            port.write_all(&tx_buf).await.at("send item")?;
                                             test_item_sent = true;
                                         }
                                     }
@@ -192,9 +194,9 @@ fn main() -> Result<(), Error> {
                             } else {
                                 println!("nothing read");
                             }
-                            sleep(Duration::from_secs(1));
+                            sleep(Duration::from_secs(1)).await;
                         }
-                        port.write_all(b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0").at("send ping")?;
+                        port.write_all(b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0").await.at("send ping")?;
                     }
                 }
                 Err(e) => port_errors.push((port_info_debug, e)),
@@ -208,7 +210,7 @@ fn main() -> Result<(), Error> {
                 eprintln!("{port_info_debug}: {error}");
             }
         }
-        sleep(Duration::from_secs(1));
+        sleep(Duration::from_secs(1)).await;
         continue
     }
 }
