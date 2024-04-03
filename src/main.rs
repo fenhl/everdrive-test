@@ -18,10 +18,7 @@ use {
 #[cfg(unix)] use {
     std::{
         ffi::OsString,
-        path::{
-            Path,
-            PathBuf,
-        },
+        path::Path,
     },
     serialport::TTYPort as NativePort,
 };
@@ -93,7 +90,7 @@ enum Connection {
 }
 
 fn connect_to_port(port_info: serialport::SerialPortInfo) -> Result<Connection, Error> {
-    #[cfg(unix)] let port_path = PathBuf::from("/dev").join(Path::new(&port_info.port_name).file_name().ok_or(ErrorKind::PortAtRoot).at("connect_to_port path builder")?).into_os_string().into_string().at("connect_to_port path builder")?;
+    #[cfg(unix)] let port_path = Path::new("/dev").join(Path::new(&port_info.port_name).file_name().ok_or(ErrorKind::PortAtRoot).at("connect_to_port path builder")?).into_os_string().into_string().at("connect_to_port path builder")?;
     #[cfg(windows)] let port_path = port_info.port_name;
     let mut port = serialport::new(port_path, 9_600)
         .timeout(TEST_TIMEOUT)
